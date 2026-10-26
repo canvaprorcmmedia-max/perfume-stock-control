@@ -47,8 +47,20 @@ app.use('/api', async (q, s, next) => {
     const auth = String(q.headers.authorization || '');
     const match = auth.match(/^Bearer\s+(.+)$/i);
     if (!match) return s.status(401).json({ error: 'Silakan masuk menggunakan akun yang diizinkan.' });
-    const { data: authData, error: authError } = await db.auth.getUser(match[1]);
-    if (authError || !authData?.user) return s.status(401).json({ error: 'Sesi login tidak valid atau telah berakhir. Silakan masuk kembali.' });
+    const { data: authData, error: authError } =
+  await db.auth.getUser(match[1]);
+
+if (authError || !authData?.user) {
+  console.error('Supabase Auth validation failed:', {
+    message: authError?.message,
+    status: authError?.status,
+    code: authError?.code
+  });
+
+  return s.status(401).json({
+    error: 'Sesi login tidak valid atau telah berakhir. Silakan masuk kembali.'
+  });
+}
     const user = authData.user;
     const { data: admin, error: adminError } = await db.from('app_admins').select('user_id').eq('user_id', user.id).maybeSingle();
     if (adminError) {
