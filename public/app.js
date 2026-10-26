@@ -84,6 +84,19 @@ $('#nav').innerHTML = PAGES.map(([k, l, i]) => `<a href="#${k}" data-k="${k}">${
 $('#burger').innerHTML = ic('menu'); $('#bell').insertAdjacentHTML('afterbegin', ic('bell'));
 $('#burger').onclick = () => $('#side').classList.toggle('open');
 $('#prof').onclick = async () => { if (confirm('Keluar dari aplikasi?')) { try { if (authClient) await authClient.auth.signOut(); } finally { accessToken = null; me = null; showLogin(); } } };
+$('#logout').onclick = async () => {
+  if (!confirm('Apakah Anda yakin ingin keluar dari aplikasi?')) return;
+
+  try {
+    if (authClient) {
+      await authClient.auth.signOut();
+    }
+  } finally {
+    accessToken = null;
+    me = null;
+    showLogin();
+  }
+};
 $('#gs').onkeydown = e => { if (e.key === 'Enter') { ps.q = e.target.value; ps.page = 1; e.target.value = ''; location.hash === '#produk' ? route() : location.hash = '#produk'; } };
 $('#bell').onclick = async () => {
   const l = await api('/lowstock');
