@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Perfume Stock Manager</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div id="login" hidden>
+  <form id="lf" class="card lbox">
+    <div class="logo">◆ Perfume Stock Manager</div>
+    <p class="hint">Masuk untuk mengelola persediaan parfum</p>
+    <label>Username<input name="username" value="admin" required autofocus></label>
+    <label>Kata sandi<input name="password" type="password" required></label>
+    <button class="btn">Masuk</button>
+  </form>
+</div>
+<div id="app" hidden>
+  <aside id="side"><div class="logo">◆ Perfume<br><small>Stock Manager</small></div><nav id="nav"></nav></aside>
+  <div class="wrap">
+    <header>
+      <button class="ib" id="burger"></button>
+      <h2 id="title"></h2>
+      <input id="gs" class="gs" placeholder="Cari produk...">
+      <button class="ib" id="bell"><span id="bn" class="bn" hidden></span></button>
+      <button class="prof" id="prof"><span class="av">A</span><span id="uname"></span></button>
+    </header>
+    <main id="main"></main>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
