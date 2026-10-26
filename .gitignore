@@ -1,0 +1,7 @@
+node_modules/
+.env
+.env.*
+!.env.example
+stok.db
+stok.db-shm
+stok.db-wal
