@@ -7,19 +7,7 @@ const app = express();
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '3mb' }));
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-if (!supabaseUrl || !supabaseKey) {
-  console.warn('Peringatan: SUPABASE_URL dan SUPABASE_SERVICE_ROLE_KEY harus diatur pada Environment Variables.');
-}
-const db = createClient(supabaseUrl || 'https://example.supabase.co', supabaseKey || 'missing-service-role-key', {
-  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
-});
-
 const wib = () => new Date(Date.now() + 7 * 36e5).toISOString().slice(0, 19).replace('T', ' ');
-const hash = (p, s) => crypto.scryptSync(p, s, 32).toString('hex');
-const hashToken = t => crypto.createHash('sha256').update(t).digest('hex');
-const getTok = q => ((q.headers.cookie || '').match(/(?:^|;\s*)sid=([a-f0-9]+)/) || [])[1];
 const errText = e => e?.message || 'Terjadi kesalahan pada server';
 
 function route(fn) {
@@ -33,63 +21,50 @@ function route(fn) {
   };
 }
 function must(ok, message, status = 400) { if (!ok) { const e = new Error(message); e.status = status; throw e; } }
-async function result(promise) {
-  const { data, error, count } = await promise;
-  if (error) { const e = new Error(error.message || 'Database error'); e.status = 400; throw e; }
-  return { data, count };
-}
-async function ensureAdmin() {
-  const { data: users, error } = await db.from('users').select('id').limit(1);
-  if (error) throw new Error('Koneksi Supabase gagal: ' + error.message);
-  if (users?.length) return;
-  const username = String(process.env.ADMIN_USERNAME || 'admin').trim();
-  const password = process.env.ADMIN_PASSWORD;
-  must(password && password.length >= 12, 'Atur ADMIN_PASSWORD minimal 12 karakter pada Environment Variables sebelum login pertama.', 500);
-  const salt = crypto.randomBytes(16).toString('hex');
-  const { error: insertError } = await db.from('users').insert({ username, nama: 'Administrator', salt, hash: hash(password, salt) });
-  if (insertError && insertError.code !== '23505') throw new Error('Gagal menyiapkan akun admin: ' + insertError.message);
-}
 
-app.post('/api/login', route(async (q, s) => {
-  await ensureAdmin();
-  const username = String(q.body?.username || '');
-  const password = String(q.body?.password || '');
-  const { data: u, error } = await db.from('users').select('id,username,nama,salt,hash').eq('username', username).maybeSingle();
-  if (error) throw error;
-  let ok = false;
-  if (u) {
-    const a = Buffer.from(hash(password, u.salt), 'hex');
-    const b = Buffer.from(u.hash, 'hex');
-    ok = a.length === b.length && crypto.timingSafeEqual(a, b);
-  }
-  must(ok, 'Username atau kata sandi salah', 401);
-  const token = crypto.randomBytes(32).toString('hex');
-  const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  const { error: se } = await db.from('sessions').insert({ token_hash: hashToken(token), username: u.username, nama: u.nama, expires_at: expires });
-  if (se) throw se;
-  s.setHeader('Set-Cookie', `sid=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=86400${process.env.VERCEL ? '; Secure' : ''}`);
-  return { username: u.username, nama: u.nama };
-}));
-
-app.use('/api', async (q, s, next) => {
-  if (q.path === '/login') return next();
-  try {
-    const token = getTok(q);
-    if (!token) return s.status(401).json({ error: 'Silakan masuk terlebih dahulu' });
-    const { data, error } = await db.from('sessions').select('username,nama,expires_at').eq('token_hash', hashToken(token)).gt('expires_at', new Date().toISOString()).maybeSingle();
-    if (error) throw error;
-    if (!data) return s.status(401).json({ error: 'Sesi berakhir. Silakan masuk kembali.' });
-    q.user = { username: data.username, nama: data.nama };
-    next();
-  } catch (e) { console.error(e); s.status(401).json({ error: 'Sesi tidak valid. Silakan masuk kembali.' }); }
+// Kunci service-role hanya digunakan di server. Jangan pernah kirim ke browser.
+const supabaseUrl = process.env.SUPABASE_URL;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const anonKey = process.env.SUPABASE_ANON_KEY;
+if (!supabaseUrl || !serviceRoleKey || !anonKey) {
+  console.warn('Environment Variables yang diperlukan: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY.');
+}
+const db = createClient(supabaseUrl || 'https://example.supabase.co', serviceRoleKey || 'missing-service-role-key', {
+  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
 });
-app.get('/api/me', route(q => q.user));
-app.post('/api/logout', route(async (q, s) => {
-  const token = getTok(q);
-  if (token) { const { error } = await db.from('sessions').delete().eq('token_hash', hashToken(token)); if (error) throw error; }
-  s.setHeader('Set-Cookie', 'sid=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0' + (process.env.VERCEL ? '; Secure' : ''));
-  return { ok: 1 };
-}));
+
+// Konfigurasi publik hanya mengirim URL dan anon/publishable key, bukan service-role key.
+app.get('/api/config', (q, s) => {
+  if (!supabaseUrl || !anonKey) return s.status(503).json({ error: 'Konfigurasi Supabase belum lengkap di Vercel.' });
+  s.setHeader('Cache-Control', 'no-store');
+  s.json({ supabaseUrl, supabaseAnonKey: anonKey });
+});
+
+// Semua endpoint API (selain config) memerlukan token Supabase Auth dan izin admin.
+app.use('/api', async (q, s, next) => {
+  if (q.path === '/config') return next();
+  try {
+    const auth = String(q.headers.authorization || '');
+    const match = auth.match(/^Bearer\s+(.+)$/i);
+    if (!match) return s.status(401).json({ error: 'Silakan masuk menggunakan akun yang diizinkan.' });
+    const { data: authData, error: authError } = await db.auth.getUser(match[1]);
+    if (authError || !authData?.user) return s.status(401).json({ error: 'Sesi login tidak valid atau telah berakhir. Silakan masuk kembali.' });
+    const user = authData.user;
+    const { data: admin, error: adminError } = await db.from('app_admins').select('user_id').eq('user_id', user.id).maybeSingle();
+    if (adminError) {
+      console.error('Pemeriksaan app_admins gagal:', adminError.message);
+      return s.status(503).json({ error: 'Daftar admin belum siap. Jalankan migration_stage3_auth.sql dan daftarkan UUID akun Anda.' });
+    }
+    if (!admin) return s.status(403).json({ error: 'Akun ini belum diizinkan mengakses aplikasi. Tambahkan UUID akun ke tabel app_admins di Supabase.' });
+    q.user = { id: user.id, email: user.email, nama: user.user_metadata?.full_name || user.email || 'Admin' };
+    next();
+  } catch (e) {
+    console.error('Auth middleware error:', e);
+    s.status(500).json({ error: 'Gagal memverifikasi sesi login. Periksa Runtime Logs Vercel.' });
+  }
+});
+app.get('/api/me', route(q => ({ id: q.user.id, email: q.user.email, nama: q.user.nama })));
+app.post('/api/logout', route(async () => ({ ok: 1 })));
 
 // ---------- Produk ----------
 const SORT = ['nama', 'stok', 'jual', 'modal', 'dibuat', 'sku'];

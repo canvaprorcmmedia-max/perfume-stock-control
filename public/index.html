@@ -12,8 +12,8 @@
   <form id="lf" class="card lbox">
     <div class="logo">◆ Perfume Stock Manager</div>
     <p class="hint">Masuk untuk mengelola persediaan parfum</p>
-    <label>Username<input name="username" value="admin" required autofocus></label>
-    <label>Kata sandi<input name="password" type="password" required></label>
+    <label>Email<input name="email" type="email" autocomplete="username" placeholder="nama@email.com" required autofocus></label>
+    <label>Kata sandi<input name="password" type="password" autocomplete="current-password" required></label>
     <button class="btn">Masuk</button>
   </form>
 </div>
@@ -30,6 +30,7 @@
     <main id="main"></main>
   </div>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="app.js"></script>
 </body>
 </html>

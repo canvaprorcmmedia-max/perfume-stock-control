@@ -12,12 +12,14 @@ const PAGES = [['dashboard', 'Dasbor', 'home'], ['produk', 'Data Produk', 'box']
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const rp = n => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(n || 0);
 const tgl = s => s ? new Date(s.replace(' ', 'T') + 'Z').toLocaleString('id-ID', { timeZone: 'UTC', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
-let me = null, charts = [], reload = () => {};
+let me = null, charts = [], reload = () => {}, authClient = null, accessToken = null;
 const ps = { q: '', kategori: '', ukuran: '', status: '', sort: 'nama', dir: 'asc', page: 1 }, trxS = {};
 
 function toast(m, err) { const t = document.createElement('div'); t.className = 'toast' + (err ? ' err' : ''); t.textContent = m; document.body.appendChild(t); setTimeout(() => t.remove(), 3500); }
 async function api(u, m = 'GET', b) {
-  const r = await fetch('/api' + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: b ? JSON.stringify(b) : undefined });
+  const headers = { 'Content-Type': 'application/json' };
+  if (accessToken) headers.Authorization = 'Bearer ' + accessToken;
+  const r = await fetch('/api' + u, { method: m, headers, body: b ? JSON.stringify(b) : undefined });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { if (r.status === 401) showLogin(); throw new Error(d.error || 'Terjadi kesalahan'); }
   return d;
@@ -40,16 +42,48 @@ const pg = (el, d, st, fn) => {
 };
 const badge = p => p.stok <= 0 ? '<span class="bd no">Habis</span>' : p.stok <= p.min_stok ? '<span class="bd lo">Menipis</span>' : '<span class="bd ok">Aman</span>';
 
-// ---------- Auth & routing ----------
+// ---------- Supabase Auth & routing ----------
 function showLogin() { $('#login').hidden = false; $('#app').hidden = true; }
+async function initAuth() {
+  try {
+    const r = await fetch('/api/config', { cache: 'no-store' });
+    const cfg = await r.json();
+    if (!r.ok) throw new Error(cfg.error || 'Konfigurasi Supabase belum tersedia.');
+    if (!window.supabase?.createClient) throw new Error('Library Supabase Auth gagal dimuat. Periksa koneksi internet/CDN.');
+    authClient = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+    });
+    const { data: { session } } = await authClient.auth.getSession();
+    accessToken = session?.access_token || null;
+    authClient.auth.onAuthStateChange((_event, sessionNow) => {
+      accessToken = sessionNow?.access_token || null;
+      if (!accessToken) showLogin();
+    });
+    if (accessToken) await boot(); else showLogin();
+  } catch (e) {
+    showLogin(); toast(e.message || 'Gagal memulai autentikasi Supabase.', 1);
+  }
+}
 $('#lf').onsubmit = async e => {
   e.preventDefault();
-  try { await api('/login', 'POST', Object.fromEntries(new FormData(e.target))); e.target.password.value = ''; boot(); } catch (x) { toast(x.message, 1); }
+  if (!authClient) return toast('Autentikasi belum siap. Muat ulang halaman.', 1);
+  const form = Object.fromEntries(new FormData(e.target));
+  const submit = e.target.querySelector('button[type="submit"],button:not([type])');
+  if (submit) submit.disabled = true;
+  try {
+    const { data, error } = await authClient.auth.signInWithPassword({ email: String(form.email || '').trim(), password: String(form.password || '') });
+    if (error) throw error;
+    accessToken = data.session?.access_token || null;
+    e.target.password.value = '';
+    await boot();
+    // Jika autentikasi valid tetapi akun tidak ada dalam app_admins, API akan menolak akses.
+  } catch (x) { toast(x.message || 'Login gagal.', 1); }
+  finally { if (submit) submit.disabled = false; }
 };
 $('#nav').innerHTML = PAGES.map(([k, l, i]) => `<a href="#${k}" data-k="${k}">${ic(i)}${l}</a>`).join('');
 $('#burger').innerHTML = ic('menu'); $('#bell').insertAdjacentHTML('afterbegin', ic('bell'));
 $('#burger').onclick = () => $('#side').classList.toggle('open');
-$('#prof').onclick = async () => { if (confirm('Keluar dari aplikasi?')) { await api('/logout', 'POST'); showLogin(); } };
+$('#prof').onclick = async () => { if (confirm('Keluar dari aplikasi?')) { try { if (authClient) await authClient.auth.signOut(); } finally { accessToken = null; me = null; showLogin(); } } };
 $('#gs').onkeydown = e => { if (e.key === 'Enter') { ps.q = e.target.value; ps.page = 1; e.target.value = ''; location.hash === '#produk' ? route() : location.hash = '#produk'; } };
 $('#bell').onclick = async () => {
   const l = await api('/lowstock');
@@ -57,7 +91,7 @@ $('#bell').onclick = async () => {
 };
 async function notif() { try { const l = await api('/lowstock'); $('#bn').hidden = !l.length; $('#bn').textContent = l.length; } catch {} }
 async function boot() {
-  try { me = await api('/me'); } catch { return showLogin(); }
+  try { me = await api('/me'); } catch (e) { if (e.message) toast(e.message, 1); return showLogin(); }
   $('#login').hidden = true; $('#app').hidden = false; $('#uname').textContent = me.nama; $('.av').textContent = me.nama[0];
   route(); notif();
 }
@@ -70,6 +104,7 @@ function route() {
   ({ dashboard: pageDash, produk: pageProduk, masuk: () => pageTrx('masuk'), keluar: () => pageTrx('keluar') })[pg_[0]]().catch(e => toast(e.message, 1));
 }
 window.onhashchange = route;
+initAuth();
 
 // ---------- Dasbor ----------
 async function pageDash() {
